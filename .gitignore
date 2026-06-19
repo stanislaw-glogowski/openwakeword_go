@@ -1,0 +1,11 @@
+# system / ide
+.idea
+.DS_Store
+
+# build / models
+bin
+*.dylib
+*.onnx
+*.bin
+*.test
+*.out
