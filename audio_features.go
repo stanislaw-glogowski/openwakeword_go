@@ -6,8 +6,6 @@ import (
 )
 
 const (
-	SampleRate           = 16000
-	FrameSamples         = 1280
 	melBins              = 32
 	melWindowFrames      = 76
 	embeddingSize        = 96
@@ -19,12 +17,14 @@ const (
 type AudioFeatures struct {
 	melspec   *onnxSession
 	embedding *onnxSession
-	raw       []int16
-	remainder []int16
+	raw       Samples
+	remainder Samples
 	mels      []float32
 	features  []float32
 }
 
+// NewAudioFeatures loads the mel-spectrogram and embedding ONNX models used
+// to turn streaming audio into wake-word model input features.
 func NewAudioFeatures(melspecPath, embeddingPath string) (*AudioFeatures, error) {
 	melspec, err := newONNXSession(melspecPath)
 	if err != nil {
@@ -32,7 +32,7 @@ func NewAudioFeatures(melspecPath, embeddingPath string) (*AudioFeatures, error)
 	}
 	embedding, err := newONNXSession(embeddingPath)
 	if err != nil {
-		_ = melspec.close()
+		_ = melspec.Close()
 		return nil, fmt.Errorf("load embedding model: %w", err)
 	}
 	f := &AudioFeatures{melspec: melspec, embedding: embedding}
@@ -40,25 +40,9 @@ func NewAudioFeatures(melspecPath, embeddingPath string) (*AudioFeatures, error)
 	return f, nil
 }
 
-func (f *AudioFeatures) Reset() {
-	f.raw = f.raw[:0]
-	f.remainder = f.remainder[:0]
-	f.mels = make([]float32, melWindowFrames*melBins)
-	for i := range f.mels {
-		f.mels[i] = 1
-	}
-	// Wake-word models need a fixed amount of context before live embeddings
-	// arrive. Zeros are deterministic and the engine suppresses startup scores.
-	f.features = make([]float32, 16*embeddingSize)
-}
-
-func (f *AudioFeatures) Close() error {
-	return errors.Join(f.melspec.close(), f.embedding.close())
-}
-
-// Process consumes arbitrary sized 16 kHz PCM chunks and returns the number
+// Process consumes arbitrary sized 16 kHz mono samples and returns the number
 // of samples converted into new embedding frames.
-func (f *AudioFeatures) Process(samples []int16) (int, error) {
+func (f *AudioFeatures) Process(samples Samples) (int, error) {
 	if len(samples) == 0 {
 		return 0, nil
 	}
@@ -67,7 +51,7 @@ func (f *AudioFeatures) Process(samples []int16) (int, error) {
 	if prepared == 0 {
 		return 0, nil
 	}
-	current := append([]int16(nil), f.remainder[:prepared]...)
+	current := append(Samples(nil), f.remainder[:prepared]...)
 	f.remainder = append(f.remainder[:0], f.remainder[prepared:]...)
 	f.appendRaw(current)
 
@@ -77,9 +61,9 @@ func (f *AudioFeatures) Process(samples []int16) (int, error) {
 	}
 	audio := make([]float32, contextSize)
 	for i, sample := range f.raw[len(f.raw)-contextSize:] {
-		audio[i] = float32(sample)
+		audio[i] = sampleToPCM16Float(sample)
 	}
-	mel, _, err := f.melspec.runFloat([]int64{1, int64(len(audio))}, audio)
+	mel, _, err := f.melspec.RunFloat([]int64{1, int64(len(audio))}, audio)
 	if err != nil {
 		return 0, fmt.Errorf("compute melspectrogram: %w", err)
 	}
@@ -92,7 +76,6 @@ func (f *AudioFeatures) Process(samples []int16) (int, error) {
 	if frames := len(f.mels) / melBins; frames > melHistoryFrames {
 		f.mels = append(f.mels[:0], f.mels[(frames-melHistoryFrames)*melBins:]...)
 	}
-
 	newFrames := prepared / FrameSamples
 	windows := make([]float32, 0, newFrames*melWindowFrames*melBins)
 	totalMelFrames := len(f.mels) / melBins
@@ -108,7 +91,7 @@ func (f *AudioFeatures) Process(samples []int16) (int, error) {
 		return prepared, nil
 	}
 	batch := len(windows) / (melWindowFrames * melBins)
-	embeddings, _, err := f.embedding.runFloat(
+	embeddings, _, err := f.embedding.RunFloat(
 		[]int64{int64(batch), melWindowFrames, melBins, 1}, windows)
 	if err != nil {
 		return 0, fmt.Errorf("compute audio embeddings: %w", err)
@@ -123,18 +106,38 @@ func (f *AudioFeatures) Process(samples []int16) (int, error) {
 	return prepared, nil
 }
 
+// Features returns a copy of the latest embedding frames and the ONNX input
+// shape expected by binary wake-word models.
 func (f *AudioFeatures) Features(frames, offsetFromLatest int) ([]float32, []int64, error) {
 	available := len(f.features) / embeddingSize
 	end := available - offsetFromLatest
 	start := end - frames
 	if frames <= 0 || offsetFromLatest < 0 || start < 0 || end > available {
-		return nil, nil, fmt.Errorf("requested %d feature frames at offset %d, have %d", frames, offsetFromLatest, available)
+		return nil, nil, fmt.Errorf("feature request out of range: frames=%d offset=%d available=%d", frames, offsetFromLatest, available)
 	}
 	data := append([]float32(nil), f.features[start*embeddingSize:end*embeddingSize]...)
 	return data, []int64{1, int64(frames), embeddingSize}, nil
 }
 
-func (f *AudioFeatures) appendRaw(samples []int16) {
+// Reset clears buffered audio, mel frames, and embedding history.
+func (f *AudioFeatures) Reset() {
+	f.raw = f.raw[:0]
+	f.remainder = f.remainder[:0]
+	f.mels = make([]float32, melWindowFrames*melBins)
+	for i := range f.mels {
+		f.mels[i] = 1
+	}
+	// Wake-word models need a fixed amount of context before live embeddings
+	// arrive. Zeros are deterministic and the engine suppresses startup scores.
+	f.features = make([]float32, 16*embeddingSize)
+}
+
+// Close releases the ONNX sessions owned by the feature extractor.
+func (f *AudioFeatures) Close() error {
+	return errors.Join(f.melspec.Close(), f.embedding.Close())
+}
+
+func (f *AudioFeatures) appendRaw(samples Samples) {
 	f.raw = append(f.raw, samples...)
 	if len(f.raw) > rawHistorySamples {
 		f.raw = append(f.raw[:0], f.raw[len(f.raw)-rawHistorySamples:]...)

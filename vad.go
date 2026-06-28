@@ -3,108 +3,95 @@ package openwakeword
 import (
 	"errors"
 	"fmt"
-	"strings"
-
-	ort "github.com/yalue/onnxruntime_go"
+	"slices"
 )
 
-type VAD struct {
-	model     *onnxSession
-	h         []float32
-	c         []float32
-	history   []float32
-	threshold float32
+const (
+	defaultVADFrameSize = 640
+	defaultVADThreshold = 0.5
+)
+
+type (
+	// VADOptions configures Silero VAD scoring.
+	VADOptions struct {
+		FrameSize int
+		Threshold float32
+	}
+
+	// VAD wraps a stateful Silero ONNX VAD model.
+	VAD struct {
+		opts    VADOptions
+		session *onnxSession
+		h       []float32
+		c       []float32
+		history Samples
+	}
+)
+
+// WithVADFrameSize sets how many samples are scored per VAD model call.
+func WithVADFrameSize(frameSize int) func(*VADOptions) {
+	return func(opts *VADOptions) {
+		opts.FrameSize = frameSize
+	}
 }
 
-func NewVAD(path string, threshold float32) (*VAD, error) {
-	model, err := newONNXSession(path)
-
-	if err != nil {
-		return nil, fmt.Errorf("load VAD model: %w", err)
+// WithVADThreshold sets the speech score threshold used by Detect.
+func WithVADThreshold(threshold float32) func(*VADOptions) {
+	return func(opts *VADOptions) {
+		opts.Threshold = threshold
 	}
-	v := &VAD{model: model, threshold: threshold}
+}
+
+// NewVAD loads a Silero VAD model using functional options.
+func NewVAD(path string, options ...func(*VADOptions)) (*VAD, error) {
+	opts := &VADOptions{}
+	for _, opt := range options {
+		opt(opts)
+	}
+	return NewVADWithOptions(path, *opts)
+}
+
+// NewVADWithOptions loads a Silero VAD model using a VADOptions value directly.
+func NewVADWithOptions(path string, opts VADOptions) (*VAD, error) {
+	if opts.Threshold == 0 {
+		opts.Threshold = defaultVADThreshold
+	}
+	if opts.FrameSize == 0 {
+		opts.FrameSize = defaultVADFrameSize
+	}
+	if opts.FrameSize <= 0 {
+		return nil, errors.New("vad frame size must be positive")
+	}
+	model, err := newONNXSession(path)
+	if err != nil {
+		return nil, fmt.Errorf("load vad model: %w", err)
+	}
+	v := &VAD{session: model, opts: opts}
 	v.Reset()
 	return v, nil
 }
 
-func (v *VAD) Reset() {
-	v.h = make([]float32, 2*64)
-	v.c = make([]float32, 2*64)
-	v.history = v.history[:0]
-}
-
-func (v *VAD) Predict(samples []int16, frameSize int) (float32, error) {
-	if frameSize <= 0 {
-		return 0, errors.New("VAD frame size must be positive")
-	}
+// Predict scores the provided samples and updates the recurrent VAD state.
+func (v *VAD) Predict(samples Samples) (float32, error) {
 	if len(samples) == 0 {
 		return 0, nil
 	}
 	var sum float32
 	var chunks int
-	for start := 0; start < len(samples); start += frameSize {
-		end := start + frameSize
+	for start := 0; start < len(samples); start += v.opts.FrameSize {
+		end := start + v.opts.FrameSize
 		if end > len(samples) {
 			end = len(samples)
 		}
-		audio := make([]float32, end-start)
-		for i, sample := range samples[start:end] {
-			audio[i] = float32(sample) / 32767
+		audio := slices.Clone(samples[start:end])
+		score, h, c, err := v.session.RunVAD(audio, v.h, v.c, SampleRate)
+		if err != nil {
+			return 0, err
 		}
-		inputs := make([]ort.Value, len(v.model.inputs))
-		for i, input := range v.model.inputs {
-			var value ort.Value
-			var err error
-			switch strings.ToLower(input.Name) {
-			case "input":
-				value, err = ort.NewTensor(ort.NewShape(1, int64(len(audio))), audio)
-			case "h":
-				value, err = ort.NewTensor(ort.NewShape(2, 1, 64), v.h)
-			case "c":
-				value, err = ort.NewTensor(ort.NewShape(2, 1, 64), v.c)
-			case "sr":
-				value, err = ort.NewTensor(ort.NewShape(1), []int64{SampleRate})
-			default:
-				return 0, fmt.Errorf("unsupported VAD input %q", input.Name)
-			}
-			if err != nil {
-				destroyONNXValues(inputs)
-				return 0, fmt.Errorf("create VAD input %q: %w", input.Name, err)
-			}
-			inputs[i] = value
-		}
-		outputs := make([]ort.Value, len(v.model.outputs))
-		runErr := v.model.session.Run(inputs, outputs)
-		destroyONNXValues(inputs)
-		if runErr != nil {
-			destroyONNXValues(outputs)
-			return 0, fmt.Errorf("run VAD model: %w", runErr)
-		}
-		var score *float32
-		for i, output := range outputs {
-			lower := strings.ToLower(v.model.outputs[i].Name)
-			tensor, ok := output.(*ort.Tensor[float32])
-			if !ok {
-				return 0, fmt.Errorf("unsupported VAD output %q type %T", v.model.outputs[i].Name, output)
-			}
-			data := tensor.GetData()
-			switch {
-			case lower == "hn" || lower == "h":
-				v.h = append(v.h[:0], data...)
-			case lower == "cn" || lower == "c":
-				v.c = append(v.c[:0], data...)
-			case len(data) > 0:
-				value := data[0]
-				score = &value
-			}
-		}
-		if score == nil {
-			destroyONNXValues(outputs)
-			return 0, errors.New("VAD model did not return a score")
-		}
-		sum += *score
+		v.h = append(v.h[:0], h...)
+		v.c = append(v.c[:0], c...)
+		sum += score
 		chunks++
-		destroyONNXValues(outputs)
 	}
 	average := sum / float32(chunks)
 	v.history = append(v.history, average)
@@ -114,9 +101,43 @@ func (v *VAD) Predict(samples []int16, frameSize int) (float32, error) {
 	return average, nil
 }
 
-// ContextScore matches openWakeWord's delayed speech context: the maximum VAD
-// score from frames 7 through 4 positions before the current prediction.
-func (v *VAD) ContextScore() float32 {
+// Detect reports whether the current samples exceed the VAD threshold.
+func (v *VAD) Detect(samples Samples) (bool, error) {
+	score, err := v.Predict(samples)
+	if err != nil {
+		return false, err
+	}
+	return score > v.opts.Threshold, nil
+}
+
+// DetectContext updates VAD state and applies openWakeWord's delayed speech
+// context check.
+func (v *VAD) DetectContext(samples Samples) (bool, error) {
+	_, err := v.Predict(samples)
+	if err != nil {
+		return false, err
+	}
+	return v.contextScore() > v.opts.Threshold, nil
+}
+
+// Reset clears recurrent state and score history.
+func (v *VAD) Reset() {
+	v.h = make([]float32, 2*64)
+	v.c = make([]float32, 2*64)
+	v.history = v.history[:0]
+}
+
+// Close releases the VAD ONNX session.
+func (v *VAD) Close() error {
+	if v == nil || v.session == nil {
+		return nil
+	}
+	err := v.session.Close()
+	v.session = nil
+	return err
+}
+
+func (v *VAD) contextScore() float32 {
 	end := len(v.history) - 4
 	start := len(v.history) - 7
 	if start < 0 || end <= start {
@@ -128,19 +149,5 @@ func (v *VAD) ContextScore() float32 {
 			score = s
 		}
 	}
-
 	return score
-}
-
-func (v *VAD) CheckContextScore() bool {
-	return v.ContextScore() >= v.threshold
-}
-
-func (v *VAD) Close() error {
-	if v == nil || v.model == nil {
-		return nil
-	}
-	err := v.model.close()
-	v.model = nil
-	return err
 }

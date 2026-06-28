@@ -24,22 +24,28 @@ func TestOfficialONNXModels(t *testing.T) {
 			t.Fatalf("destroy ONNX Runtime: %v", err)
 		}
 	}()
-	engine, err := New(Options{
-		MelspectrogramModelPath: filepath.Join(models, "melspectrogram.onnx"),
-		EmbeddingModelPath:      filepath.Join(models, "embedding_model.onnx"),
-		VADModelPath:            filepath.Join(models, "silero_vad.onnx"),
-		VADThreshold:            0.5,
-		WakeWordModels: []ModelConfig{{
-			Path: filepath.Join(models, "alexa_v0.1.onnx"), Name: "alexa",
-		}},
-	})
+	features, err := NewAudioFeatures(
+		filepath.Join(models, "melspectrogram.onnx"),
+		filepath.Join(models, "embedding_model.onnx"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vad, err := NewVAD(filepath.Join(models, "silero_vad.onnx"), WithVADThreshold(0.5))
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine, err := New(features, vad)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer engine.Close()
+	if err := engine.AddModel(filepath.Join(models, "alexa_v0.1.onnx"), WithModelName("alexa")); err != nil {
+		t.Fatal(err)
+	}
 	var scores map[string]float32
 	for i := 0; i < 30; i++ {
-		scores, err = engine.Predict(make([]int16, FrameSamples))
+		scores, err = engine.Predict(make(Samples, FrameSamples))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -52,7 +58,7 @@ func TestOfficialONNXModels(t *testing.T) {
 	}
 	if wav := os.Getenv("OPENWAKEWORD_TEST_WAV"); wav != "" {
 		engine.Reset()
-		predictions, err := engine.PredictWAV(wav, FrameSamples, time.Second, PredictOptions{})
+		predictions, err := engine.PredictWAV(wav, FrameSamples, time.Second)
 		if err != nil {
 			t.Fatal(err)
 		}

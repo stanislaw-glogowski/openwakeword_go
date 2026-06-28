@@ -7,17 +7,17 @@ import (
 )
 
 func TestPredictionHistoryHelpers(t *testing.T) {
-	history := make([]float32, 0, predictionHistory+5)
+	m := &model{threshold: 32, history: make([]float32, 0, predictionHistory+5)}
 	for i := 0; i < predictionHistory+5; i++ {
-		history = appendHistory(history, float32(i))
+		m.appendHistory(float32(i))
 	}
-	if len(history) != predictionHistory {
-		t.Fatalf("expected %d history entries, got %d", predictionHistory, len(history))
+	if len(m.history) != predictionHistory {
+		t.Fatalf("expected %d history entries, got %d", predictionHistory, len(m.history))
 	}
-	if history[0] != 5 {
-		t.Fatalf("expected oldest retained score 5, got %v", history[0])
+	if m.history[0] != 5 {
+		t.Fatalf("expected oldest retained score 5, got %v", m.history[0])
 	}
-	if got := countAtLeast(tail(history, 4), 32); got != 3 {
+	if got := m.countAtLeast(4); got != 3 {
 		t.Fatalf("expected 3 scores at least 32, got %d", got)
 	}
 }
@@ -54,7 +54,7 @@ func TestDecodeWAV(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(wav.Samples) != len(samples) || wav.Samples[0] != samples[0] || wav.Samples[4] != samples[4] {
+	if len(wav.Samples) != len(samples) || wav.Samples[0] != -1 || wav.Samples[2] != 0 || wav.Samples[4] != 1 {
 		t.Fatalf("unexpected WAV samples: %+v", wav)
 	}
 }

@@ -1,19 +1,24 @@
-# `openwakeword_go`
+# openwakeword_go
 
-Native Go implementation of the openWakeWord inference pipeline. It runs ONNX
-melspectrogram, speech embedding, wake-word, and optional Silero VAD models
-without Python.
+![Go Version](https://img.shields.io/badge/go-1.22+-00ADD8)
+![License](https://img.shields.io/badge/license-Apache--2.0-blue)
+![Status](https://img.shields.io/badge/status-v0.1.0_preview-orange)
 
-## Features
+Native Go inference pipeline for openWakeWord: streaming audio features,
+wake-word scoring, optional Silero VAD, and WAV helpers without Python.
 
-- Streaming 16 kHz, mono, signed 16-bit PCM input
+> This project is pre-1.0; public APIs may change between minor versions.
+
+## ✨ Features
+
+- Streaming 16 kHz, mono, `float32` PCM input
 - Arbitrary input chunk sizes with 1280-sample internal framing
-- Multiple binary or multiclass wake-word ONNX models
+- Multiple binary wake-word ONNX models
 - Python-compatible startup suppression, patience, debounce, and VAD behavior
-- Optional class mappings, verifier interface, audio filter interface, and WAV processing
+- WAV processing helpers
 - Direct integration with `github.com/yalue/onnxruntime_go`
 
-## Requirements
+## 📦 Requirements
 
 The ONNX backend uses
 [`github.com/yalue/onnxruntime_go`](https://github.com/yalue/onnxruntime_go).
@@ -29,7 +34,7 @@ Your application must provide a compatible native ONNX Runtime shared library:
 Official openWakeWord model weights are licensed separately under
 CC BY-NC-SA 4.0. The Go source in this repository is Apache-2.0.
 
-## Setup Scripts
+## 🧰 Setup Scripts
 
 The repository includes small helper scripts for local development and the
 microphone demo:
@@ -50,14 +55,13 @@ Both scripts accept an optional output directory:
 ./scripts/download-runtime.sh /path/to/runtime
 ```
 
-## Usage
+## 🚀 Quick Start
 
 ```go
 package main
 
 import (
 	"log"
-	"time"
 
 	openwakeword "github.com/stanislaw-glogowski/openwakeword_go"
 	ort "github.com/yalue/onnxruntime_go"
@@ -70,34 +74,45 @@ func main() {
 	}
 	defer ort.DestroyEnvironment()
 
-	engine, err := openwakeword.New(openwakeword.Options{
-		MelspectrogramModelPath: "models/melspectrogram.onnx",
-		EmbeddingModelPath:      "models/embedding_model.onnx",
-		VADModelPath:            "models/silero_vad.onnx",
-		VADThreshold:            0.5,
-		WakeWordModels: []openwakeword.ModelConfig{{
-			Name: "hey_jarvis_v0.1",
-			Path: "models/hey_jarvis_v0.1.onnx",
-		}},
-	})
+	features, err := openwakeword.NewAudioFeatures(
+		"models/melspectrogram.onnx",
+		"models/embedding_model.onnx",
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	vad, err := openwakeword.NewVAD(
+		"models/silero_vad.onnx",
+		openwakeword.WithVADThreshold(0.5),
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	engine, err := openwakeword.New(features, vad)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer engine.Close()
 
+	err = engine.AddModel(
+		"models/hey_jarvis_v0.1.onnx",
+		openwakeword.WithModelName("hey_jarvis_v0.1"),
+		openwakeword.WithModelThreshold(0.5),
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	// Feed successive microphone frames. 1280 samples is 80 ms at 16 kHz.
-	scores, err := engine.Predict(make([]int16, openwakeword.FrameSamples))
+	scores, err := engine.Predict(make(openwakeword.Samples, openwakeword.FrameSamples))
 	if err != nil {
 		log.Fatal(err)
 	}
 	if scores["hey_jarvis_v0.1"] >= 0.5 {
 		log.Println("wake word detected")
 	}
-
-	_, _ = engine.PredictWithOptions(make([]int16, openwakeword.FrameSamples), openwakeword.PredictOptions{
-		Threshold:    map[string]float32{"hey_jarvis_v0.1": 0.5},
-		DebounceTime: 1250 * time.Millisecond,
-	})
 }
 ```
 
@@ -106,35 +121,19 @@ For a WAV file:
 ```go
 predictions, err := engine.PredictWAV(
 	"recording.wav", openwakeword.FrameSamples, time.Second,
-	openwakeword.PredictOptions{},
 )
 ```
 
 The WAV must be mono 16-bit PCM at 16 kHz.
 
-## Model Config
+## 🎯 Models
 
-`ModelConfig.Name` controls the key returned by `Predict` for binary models.
-If it is empty, the filename without `.onnx` is used.
+`AddModel` loads a binary wake-word ONNX model. `WithModelName` controls the key
+returned by `Predict`; if it is omitted, the filename without `.onnx` is used.
+Model options store per-model detection settings such as threshold, patience,
+and debounce time.
 
-For multiclass models, use `ClassMapping` to map output indexes to result keys:
-
-```go
-openwakeword.ModelConfig{
-	Path: "models/multiclass.onnx",
-	Name: "wakewords",
-	ClassMapping: map[int]string{
-		0: "alexa",
-		1: "hey_jarvis_v0.1",
-	},
-}
-```
-
-`AudioFilter` can preprocess incoming PCM before feature extraction.
-`Verifier` can run a second-stage score for a model after the first wake-word
-score reaches `VerifierThreshold`.
-
-## Tests
+## 🧪 Tests
 
 ```bash
 go test ./...
@@ -158,10 +157,11 @@ go test -run TestOfficialONNXModels -v
 - `silero_vad.onnx`
 - one or more wake-word models, for example `alexa_v0.1.onnx`
 
-## Microphone Demo
+## 🎙️ Microphone Example
 
-The demo in `cmd/openwakeword_demo/main.go` listens to the default PortAudio
-input. It reads configuration from a working directory, using `--cwd` or the
+The example in `examples/microphone` listens to the default PortAudio input. It
+is a separate Go module so the main library does not depend on PortAudio. The
+example reads configuration from a working directory, using `--cwd` or the
 current directory by default.
 
 Use the setup scripts above to download the default model files and ONNX
@@ -197,13 +197,14 @@ brew install portaudio
 Run the demo:
 
 ```bash
-go run ./cmd/openwakeword_demo
+cd examples/microphone
+go run .
 ```
 
 Useful flags:
 
 ```bash
-go run ./cmd/openwakeword_demo \
+go run . \
   --cwd /path/to/openwakeword_assets \
   --threshold 0.9 \
   --vad-threshold 0.5 \
@@ -214,3 +215,8 @@ go run ./cmd/openwakeword_demo \
 Set `--vad-threshold 0` to disable VAD. The default microphone must support
 mono capture at 16 kHz. macOS will ask for microphone permission the first time
 the program starts recording.
+
+## 📄 License
+
+The Go source code in this repository is licensed under Apache-2.0. Official
+openWakeWord model weights are licensed separately under CC BY-NC-SA 4.0.

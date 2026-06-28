@@ -71,24 +71,25 @@ func main() {
 		}
 	}()
 
-	opts := oww.Options{
-		MelspectrogramModelPath: cfg.melspecPath,
-		EmbeddingModelPath:      cfg.embeddingPath,
+	audioFeatures, err := oww.NewAudioFeatures(cfg.melspecPath, cfg.embeddingPath)
+	if err != nil {
+		log.Fatalf("openwakeword.NewAudioFeatures: %v", err)
 	}
+	var vad *oww.VAD
 	if cfg.vad != nil {
-		opts.VADModelPath = cfg.vad.path
-		opts.VADThreshold = float32(cfg.vad.threshold)
+		vad, err = oww.NewVAD(cfg.vad.path, oww.WithVADThreshold(float32(cfg.vad.threshold)))
+		if err != nil {
+			log.Fatalf("openwakeword.NewVAD: %v", err)
+		}
+	}
+	engine, err := oww.New(audioFeatures, vad)
+	if err != nil {
+		log.Fatalf("openwakeword.New: %v", err)
 	}
 	for _, model := range cfg.models {
-		opts.WakeWordModels = append(opts.WakeWordModels, oww.ModelConfig{
-			Name: model.name,
-			Path: model.path,
-		})
-	}
-
-	engine, err := oww.New(opts)
-	if err != nil {
-		log.Fatalf("engine.New: %v", err)
+		if err := engine.AddModel(model.path, oww.WithModelName(model.name)); err != nil {
+			log.Fatalf("engine.AddModel: %v", err)
+		}
 	}
 
 	defer func() {
@@ -107,7 +108,7 @@ func main() {
 		}
 	}()
 
-	input := make([]int16, oww.FrameSamples)
+	input := make(oww.Samples, oww.FrameSamples)
 	stream, err := portaudio.OpenDefaultStream(
 		1,
 		0,
@@ -244,7 +245,7 @@ func readConfig() (cfg config, err error) {
 	}
 	if *vadThreshold > 0 {
 		if vad == nil {
-			return config{}, fmt.Errorf("VAD threshold is enabled but %q is missing", filepath.Join(modelsDir, "silero_vad.onnx"))
+			return config{}, fmt.Errorf("vad threshold is enabled but %q is missing", filepath.Join(modelsDir, "silero_vad.onnx"))
 		}
 		if err := requireRegularFile(vad.path, "VAD model"); err != nil {
 			return config{}, err
