@@ -20,25 +20,9 @@ type (
 	}
 )
 
-// onnxValues
-
 func newONNXValues(n int) *onnxValues {
 	return &onnxValues{values: make([]ort.Value, n)}
 }
-
-func (v *onnxValues) Set(i int, value ort.Value) {
-	v.values[i] = value
-}
-
-func (v *onnxValues) Close() {
-	for _, value := range v.values {
-		if value != nil {
-			_ = value.Destroy()
-		}
-	}
-}
-
-// onnxSession
 
 func newONNXSession(path string) (*onnxSession, error) {
 	inputs, outputs, err := ort.GetInputOutputInfo(path)
@@ -63,12 +47,23 @@ func newONNXSession(path string) (*onnxSession, error) {
 	return &onnxSession{session: session, inputs: inputs, outputs: outputs}, nil
 }
 
-func (s *onnxSession) Run(inputs *onnxValues, outputs *onnxValues) error {
+func (v *onnxValues) set(i int, value ort.Value) {
+	v.values[i] = value
+}
+
+func (v *onnxValues) close() {
+	for _, value := range v.values {
+		if value != nil {
+			_ = value.Destroy()
+		}
+	}
+}
+
+func (s *onnxSession) run(inputs *onnxValues, outputs *onnxValues) error {
 	return s.session.Run(inputs.values, outputs.values)
 }
 
-// RunFloat executes single-input float32 models and returns a copied first output.
-func (s *onnxSession) RunFloat(shape []int64, data []float32) (_ []float32, _ []int64, err error) {
+func (s *onnxSession) runFloat(shape []int64, data []float32) (_ []float32, _ []int64, err error) {
 	if len(s.inputs) != 1 || len(s.outputs) == 0 {
 		return nil, nil, fmt.Errorf("expected one input and at least one output, got %d and %d", len(s.inputs), len(s.outputs))
 	}
@@ -83,10 +78,10 @@ func (s *onnxSession) RunFloat(shape []int64, data []float32) (_ []float32, _ []
 	}(input)
 	outputs := newONNXValues(len(s.outputs))
 	if err := s.session.Run([]ort.Value{input}, outputs.values); err != nil {
-		outputs.Close()
+		outputs.close()
 		return nil, nil, err
 	}
-	defer outputs.Close()
+	defer outputs.close()
 
 	output, ok := outputs.values[0].(*ort.Tensor[float32])
 	if !ok {
@@ -95,11 +90,11 @@ func (s *onnxSession) RunFloat(shape []int64, data []float32) (_ []float32, _ []
 	return append([]float32(nil), output.GetData()...), append([]int64(nil), output.GetShape()...), nil
 }
 
-// RunVAD executes Silero VAD and returns the current speech score plus copied
+// runVAD executes Silero VAD and returns the current speech score plus copied
 // recurrent state tensors.
-func (s *onnxSession) RunVAD(audio, h, c []float32, sampleRate int) (float32, []float32, []float32, error) {
+func (s *onnxSession) runVAD(audio, h, c []float32, sampleRate int) (float32, []float32, []float32, error) {
 	inputs := newONNXValues(len(s.inputs))
-	defer inputs.Close()
+	defer inputs.close()
 
 	for i, input := range s.inputs {
 		var (
@@ -121,13 +116,13 @@ func (s *onnxSession) RunVAD(audio, h, c []float32, sampleRate int) (float32, []
 		if err != nil {
 			return 0, nil, nil, fmt.Errorf("create vad input %q: %w", input.Name, err)
 		}
-		inputs.Set(i, value)
+		inputs.set(i, value)
 	}
 
 	outputs := newONNXValues(len(s.outputs))
-	defer outputs.Close()
+	defer outputs.close()
 
-	if err := s.Run(inputs, outputs); err != nil {
+	if err := s.run(inputs, outputs); err != nil {
 		return 0, nil, nil, fmt.Errorf("run vad model: %w", err)
 	}
 
@@ -162,7 +157,7 @@ func (s *onnxSession) RunVAD(audio, h, c []float32, sampleRate int) (float32, []
 	return *score, nextH, nextC, nil
 }
 
-func (s *onnxSession) Close() error {
+func (s *onnxSession) close() error {
 	if s == nil || s.session == nil {
 		return nil
 	}

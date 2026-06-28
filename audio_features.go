@@ -32,7 +32,7 @@ func NewAudioFeatures(melspecPath, embeddingPath string) (*AudioFeatures, error)
 	}
 	embedding, err := newONNXSession(embeddingPath)
 	if err != nil {
-		_ = melspec.Close()
+		_ = melspec.close()
 		return nil, fmt.Errorf("load embedding model: %w", err)
 	}
 	f := &AudioFeatures{melspec: melspec, embedding: embedding}
@@ -63,7 +63,7 @@ func (f *AudioFeatures) Process(samples Samples) (int, error) {
 	for i, sample := range f.raw[len(f.raw)-contextSize:] {
 		audio[i] = sampleToPCM16Float(sample)
 	}
-	mel, _, err := f.melspec.RunFloat([]int64{1, int64(len(audio))}, audio)
+	mel, _, err := f.melspec.runFloat([]int64{1, int64(len(audio))}, audio)
 	if err != nil {
 		return 0, fmt.Errorf("compute melspectrogram: %w", err)
 	}
@@ -91,7 +91,7 @@ func (f *AudioFeatures) Process(samples Samples) (int, error) {
 		return prepared, nil
 	}
 	batch := len(windows) / (melWindowFrames * melBins)
-	embeddings, _, err := f.embedding.RunFloat(
+	embeddings, _, err := f.embedding.runFloat(
 		[]int64{int64(batch), melWindowFrames, melBins, 1}, windows)
 	if err != nil {
 		return 0, fmt.Errorf("compute audio embeddings: %w", err)
@@ -134,7 +134,7 @@ func (f *AudioFeatures) Reset() {
 
 // Close releases the ONNX sessions owned by the feature extractor.
 func (f *AudioFeatures) Close() error {
-	return errors.Join(f.melspec.Close(), f.embedding.Close())
+	return errors.Join(f.melspec.close(), f.embedding.close())
 }
 
 func (f *AudioFeatures) appendRaw(samples Samples) {

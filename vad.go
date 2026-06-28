@@ -84,7 +84,7 @@ func (v *VAD) Predict(samples Samples) (float32, error) {
 			end = len(samples)
 		}
 		audio := slices.Clone(samples[start:end])
-		score, h, c, err := v.session.RunVAD(audio, v.h, v.c, SampleRate)
+		score, h, c, err := v.session.runVAD(audio, v.h, v.c, SampleRate)
 		if err != nil {
 			return 0, err
 		}
@@ -132,7 +132,7 @@ func (v *VAD) Close() error {
 	if v == nil || v.session == nil {
 		return nil
 	}
-	err := v.session.Close()
+	err := v.session.close()
 	v.session = nil
 	return err
 }

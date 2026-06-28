@@ -61,6 +61,72 @@ func (e *Engine) Predict(samples Samples) (map[string]float32, error) {
 	}
 	e.Lock()
 	defer e.Unlock()
+	return e.predictLocked(samples)
+}
+
+// Detect processes streaming audio and reports whether each loaded model's
+// current score is at or above its configured threshold.
+func (e *Engine) Detect(samples Samples) (map[string]bool, error) {
+	if e == nil {
+		return nil, errors.New("engine is nil")
+	}
+	e.Lock()
+	defer e.Unlock()
+	scores, err := e.predictLocked(samples)
+	if err != nil {
+		return nil, err
+	}
+	detections := make(map[string]bool, len(scores))
+	for name, score := range scores {
+		model := e.models[name]
+		detections[name] = model != nil && score >= model.threshold
+	}
+	return detections, nil
+}
+
+// Reset clears feature, model, and VAD history while keeping loaded models.
+func (e *Engine) Reset() {
+	if e == nil {
+		return
+	}
+	e.Lock()
+	defer e.Unlock()
+	for _, model := range e.models {
+		model.reset()
+	}
+	if e.audioFeatures != nil {
+		e.audioFeatures.Reset()
+	}
+	if e.vad != nil {
+		e.vad.Reset()
+	}
+}
+
+// Close releases all ONNX sessions owned by the engine.
+func (e *Engine) Close() error {
+	if e == nil {
+		return nil
+	}
+	e.Lock()
+	defer e.Unlock()
+	if e.closed {
+		return nil
+	}
+	e.closed = true
+	var errs []error
+	for _, m := range e.models {
+		errs = append(errs, m.close())
+	}
+	if e.vad != nil {
+		errs = append(errs, e.vad.Close())
+	}
+	if e.audioFeatures != nil {
+		errs = append(errs, e.audioFeatures.Close())
+	}
+	return errors.Join(errs...)
+}
+
+func (e *Engine) predictLocked(samples Samples) (map[string]float32, error) {
 	if e.closed {
 		return nil, errors.New("engine is closed")
 	}
@@ -74,7 +140,7 @@ func (e *Engine) Predict(samples Samples) (map[string]float32, error) {
 	}
 	predictions := make(map[string]float32)
 	for name, model := range e.models {
-		predictions[name] = model.Latest()
+		predictions[name] = model.latest()
 		if prepared == 0 {
 			continue
 		}
@@ -84,7 +150,7 @@ func (e *Engine) Predict(samples Samples) (map[string]float32, error) {
 			if err != nil {
 				return nil, err
 			}
-			values, _, err := model.session.RunFloat(shape, features)
+			values, _, err := model.session.runFloat(shape, features)
 			if err != nil {
 				return nil, fmt.Errorf("predict with %q: %w", name, err)
 			}
@@ -133,48 +199,6 @@ func (e *Engine) Predict(samples Samples) (map[string]float32, error) {
 	return predictions, nil
 }
 
-// Reset clears feature, model, and VAD history while keeping loaded models.
-func (e *Engine) Reset() {
-	if e == nil {
-		return
-	}
-	e.Lock()
-	defer e.Unlock()
-	for _, model := range e.models {
-		model.history = model.history[:0]
-	}
-	if e.audioFeatures != nil {
-		e.audioFeatures.Reset()
-	}
-	if e.vad != nil {
-		e.vad.Reset()
-	}
-}
-
-// Close releases all ONNX sessions owned by the engine.
-func (e *Engine) Close() error {
-	if e == nil {
-		return nil
-	}
-	e.Lock()
-	defer e.Unlock()
-	if e.closed {
-		return nil
-	}
-	e.closed = true
-	var errs []error
-	for _, m := range e.models {
-		errs = append(errs, m.Close())
-	}
-	if e.vad != nil {
-		errs = append(errs, e.vad.Close())
-	}
-	if e.audioFeatures != nil {
-		errs = append(errs, e.audioFeatures.Close())
-	}
-	return errors.Join(errs...)
-}
-
 func (e *Engine) addModel(path string, opts ModelOptions) error {
 	if e.closed {
 		return errors.New("engine is closed")
@@ -184,7 +208,7 @@ func (e *Engine) addModel(path string, opts ModelOptions) error {
 		return err
 	}
 	if _, exists := e.models[m.name]; exists {
-		_ = m.Close()
+		_ = m.close()
 		return fmt.Errorf("model %q is already loaded", m.name)
 	}
 	e.models[m.name] = m

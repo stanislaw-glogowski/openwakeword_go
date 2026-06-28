@@ -101,16 +101,18 @@ func (e *Engine) PredictWAV(path string, chunkSize int, padding time.Duration) (
 	return e.PredictClip(wav.Samples, chunkSize, padding)
 }
 
+// DetectWAV reads a WAV file and runs DetectClip over its samples.
+func (e *Engine) DetectWAV(path string, chunkSize int, padding time.Duration) ([]map[string]bool, error) {
+	wav, err := ReadWAV(path)
+	if err != nil {
+		return nil, err
+	}
+	return e.DetectClip(wav.Samples, chunkSize, padding)
+}
+
 // PredictClip runs streaming prediction over a complete in-memory clip.
 func (e *Engine) PredictClip(samples Samples, chunkSize int, padding time.Duration) ([]map[string]float32, error) {
-	if chunkSize <= 0 {
-		chunkSize = FrameSamples
-	}
-	paddingSamples := int(float64(SampleRate) * padding.Seconds())
-	data := make(Samples, 0, paddingSamples*2+len(samples))
-	data = append(data, make(Samples, paddingSamples)...)
-	data = append(data, samples...)
-	data = append(data, make(Samples, paddingSamples)...)
+	data, chunkSize := paddedClip(samples, chunkSize, padding)
 	predictions := make([]map[string]float32, 0, (len(data)+chunkSize-1)/chunkSize)
 	for start := 0; start < len(data); start += chunkSize {
 		end := start + chunkSize
@@ -124,4 +126,34 @@ func (e *Engine) PredictClip(samples Samples, chunkSize int, padding time.Durati
 		predictions = append(predictions, prediction)
 	}
 	return predictions, nil
+}
+
+// DetectClip runs streaming threshold detection over a complete in-memory clip.
+func (e *Engine) DetectClip(samples Samples, chunkSize int, padding time.Duration) ([]map[string]bool, error) {
+	data, chunkSize := paddedClip(samples, chunkSize, padding)
+	detections := make([]map[string]bool, 0, (len(data)+chunkSize-1)/chunkSize)
+	for start := 0; start < len(data); start += chunkSize {
+		end := start + chunkSize
+		if end > len(data) {
+			end = len(data)
+		}
+		detection, err := e.Detect(data[start:end])
+		if err != nil {
+			return nil, err
+		}
+		detections = append(detections, detection)
+	}
+	return detections, nil
+}
+
+func paddedClip(samples Samples, chunkSize int, padding time.Duration) (Samples, int) {
+	if chunkSize <= 0 {
+		chunkSize = FrameSamples
+	}
+	paddingSamples := int(float64(SampleRate) * padding.Seconds())
+	data := make(Samples, 0, paddingSamples*2+len(samples))
+	data = append(data, make(Samples, paddingSamples)...)
+	data = append(data, samples...)
+	data = append(data, make(Samples, paddingSamples)...)
+	return data, chunkSize
 }

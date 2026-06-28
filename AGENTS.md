@@ -74,6 +74,25 @@ Use the platform-specific ONNX Runtime filename when not on macOS.
 - The main module should not depend on PortAudio. Keep microphone-only code in
   `examples/microphone`.
 
+## Go File Layout
+
+Keep Go declarations ordered consistently:
+
+1. `package`
+2. `import`
+3. `const`: exported constants first, then unexported constants.
+4. `var`: `Err...` values first, then `Default...` values, then other package
+   variables.
+5. `type`: aliases, enum-like types, structs, then interfaces.
+6. Constructors: `New...`, then `NewFrom...`.
+7. Public methods and public functions.
+8. Private methods and private functions.
+9. Small helper functions.
+
+Do not mix private methods between public methods. For private types, prefer
+unexported method names unless there is a concrete reason to expose the method
+inside package documentation.
+
 ## Error And Documentation Style
 
 - Use lower-case error messages unless they begin with an identifier or acronym

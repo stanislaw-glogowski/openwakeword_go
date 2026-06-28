@@ -39,7 +39,12 @@ func TestOfficialONNXModels(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer engine.Close()
+	defer func(engine *Engine) {
+		err := engine.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}(engine)
 	if err := engine.AddModel(filepath.Join(models, "alexa_v0.1.onnx"), WithModelName("alexa")); err != nil {
 		t.Fatal(err)
 	}

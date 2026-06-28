@@ -75,9 +75,16 @@ func buildModelOptions(options ...func(*ModelOptions)) ModelOptions {
 	return *opts
 }
 
-// model
-
 func newModel(path string, opts ModelOptions) (*model, error) {
+	if opts.Threshold == 0 {
+		opts.Threshold = defaultModelThreshold
+	}
+	if opts.Patience == 0 {
+		opts.Patience = defaultModelPatience
+	}
+	if opts.DebounceTime == 0 {
+		opts.DebounceTime = defaultModelDebounceTime
+	}
 	if strings.ToLower(filepath.Ext(path)) != ".onnx" {
 		return nil, fmt.Errorf("wake-word model must be an ONNX file, got %q", filepath.Ext(path))
 	}
@@ -96,16 +103,16 @@ func newModel(path string, opts ModelOptions) (*model, error) {
 		return nil, fmt.Errorf("load wake-word model %q: %w", name, err)
 	}
 	if len(session.inputs) != 1 || len(session.inputs[0].Dimensions) < 2 || session.inputs[0].Dimensions[1] <= 0 {
-		_ = session.Close()
+		_ = session.close()
 		return nil, fmt.Errorf("wake-word model %q has unsupported input shape", name)
 	}
 	if len(session.outputs) != 1 {
-		_ = session.Close()
+		_ = session.close()
 		return nil, fmt.Errorf("wake-word model %q must have one output", name)
 	}
 	outputCount := lastPositiveDimension(session.outputs[0].Dimensions)
 	if outputCount != 1 {
-		_ = session.Close()
+		_ = session.close()
 		return nil, fmt.Errorf("wake-word model %q must return one score, got %d", name, outputCount)
 	}
 	return &model{
@@ -118,19 +125,19 @@ func newModel(path string, opts ModelOptions) (*model, error) {
 	}, nil
 }
 
-func (m *model) Latest() float32 {
+func (m *model) latest() float32 {
 	if len(m.history) == 0 {
 		return 0
 	}
 	return m.history[len(m.history)-1]
 }
 
-func (m *model) Reset() {
+func (m *model) reset() {
 	m.history = m.history[:0]
 }
 
-func (m *model) Close() error {
-	return m.session.Close()
+func (m *model) close() error {
+	return m.session.close()
 }
 
 func (m *model) appendHistory(score float32) {
@@ -152,8 +159,6 @@ func (m *model) countAtLeast(n int) (count int) {
 	}
 	return
 }
-
-// helpers
 
 func lastPositiveDimension(shape []int64) int {
 	for i := len(shape) - 1; i >= 0; i-- {

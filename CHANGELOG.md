@@ -12,7 +12,7 @@ Initial preview release of `openwakeword_go`.
 - Binary wake-word model loading with per-model threshold, patience, and debounce options.
 - Optional Silero VAD support for wake-word suppression.
 - `Samples` float32 PCM input type for streaming audio.
-- WAV decoding and clip prediction helpers for mono 16-bit PCM at 16 kHz.
+- WAV decoding plus clip prediction and detection helpers for mono 16-bit PCM at 16 kHz.
 - Opt-in integration test for official ONNX models and local runtime assets.
 - Microphone example in `examples/microphone` as a separate Go module, so the main library does not depend on PortAudio.
 - Helper scripts for downloading model files and ONNX Runtime.

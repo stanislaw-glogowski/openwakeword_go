@@ -116,10 +116,26 @@ func main() {
 }
 ```
 
+For boolean detections using the model threshold:
+
+```go
+detections, err := engine.Detect(make(openwakeword.Samples, openwakeword.FrameSamples))
+if err != nil {
+	log.Fatal(err)
+}
+if detections["hey_jarvis_v0.1"] {
+	log.Println("wake word detected")
+}
+```
+
 For a WAV file:
 
 ```go
 predictions, err := engine.PredictWAV(
+	"recording.wav", openwakeword.FrameSamples, time.Second,
+)
+
+detections, err := engine.DetectWAV(
 	"recording.wav", openwakeword.FrameSamples, time.Second,
 )
 ```
@@ -132,6 +148,36 @@ The WAV must be mono 16-bit PCM at 16 kHz.
 returned by `Predict`; if it is omitted, the filename without `.onnx` is used.
 Model options store per-model detection settings such as threshold, patience,
 and debounce time.
+
+## 🗣️ Using VAD Directly
+
+`VAD` can be used independently from the wake-word engine. Use this when you
+need speech/silence detection for a conversation stream with separate state and
+thresholds.
+
+```go
+vad, err := openwakeword.NewVAD(
+	"models/silero_vad.onnx",
+	openwakeword.WithVADThreshold(0.5),
+	openwakeword.WithVADFrameSize(640),
+)
+if err != nil {
+	log.Fatal(err)
+}
+defer vad.Close()
+
+speech, err := vad.Detect(samples)
+if err != nil {
+	log.Fatal(err)
+}
+if !speech {
+	log.Println("silence detected")
+}
+```
+
+Use a separate `VAD` instance for unrelated streams. The model keeps recurrent
+state and score history, so sharing one instance between wake-word suppression
+and conversation silence detection will couple those workflows.
 
 ## 🧪 Tests
 
@@ -215,6 +261,17 @@ go run . \
 Set `--vad-threshold 0` to disable VAD. The default microphone must support
 mono capture at 16 kHz. macOS will ask for microphone permission the first time
 the program starts recording.
+
+## 🗺️ Roadmap
+
+- GitHub Actions CI for `go test ./...` and `go vet ./...`.
+- WAV-file example that accepts a local file path instead of bundling sample
+  audio in the repository.
+- Optional resampling example for common 44.1/48 kHz input sources. Keep this
+  outside the core library unless there is a strong reason to add a dependency.
+- More package examples for `Engine.Detect`, direct `VAD` usage, and clip
+  prediction.
+- Additional opt-in benchmarks around local ONNX model assets.
 
 ## 📄 License
 
