@@ -1,4 +1,4 @@
-# openwakeword_go
+# `openwakeword_go`
 
 ![Go Version](https://img.shields.io/badge/go-1.22+-00ADD8)
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue)
@@ -9,7 +9,7 @@ wake-word scoring, optional Silero VAD, and WAV helpers without Python.
 
 > This project is pre-1.0; public APIs may change between minor versions.
 
-## ✨ Features
+## Features ✨
 
 - Streaming 16 kHz, mono, `float32` PCM input
 - Arbitrary input chunk sizes with 1280-sample internal framing
@@ -18,7 +18,7 @@ wake-word scoring, optional Silero VAD, and WAV helpers without Python.
 - WAV processing helpers
 - Direct integration with `github.com/yalue/onnxruntime_go`
 
-## 📦 Requirements
+## Requirements 📦
 
 The ONNX backend uses
 [`github.com/yalue/onnxruntime_go`](https://github.com/yalue/onnxruntime_go).
@@ -34,7 +34,7 @@ Your application must provide a compatible native ONNX Runtime shared library:
 Official openWakeWord model weights are licensed separately under
 CC BY-NC-SA 4.0. The Go source in this repository is Apache-2.0.
 
-## 🧰 Setup Scripts
+## Setup Scripts ⚙️
 
 The repository includes small helper scripts for local development and the
 microphone demo:
@@ -55,7 +55,7 @@ Both scripts accept an optional output directory:
 ./scripts/download-runtime.sh /path/to/runtime
 ```
 
-## 🚀 Quick Start
+## Quick Start 🚀
 
 ```go
 package main
@@ -143,14 +143,14 @@ detections, err := engine.DetectWAV(
 
 The WAV must be mono 16-bit PCM at 16 kHz.
 
-## 🎯 Models
+## Models 🤖 
 
 `AddModel` loads a binary wake-word ONNX model. `WithModelName` controls the key
 returned by `Predict`; if it is omitted, the filename without `.onnx` is used.
 Model options store per-model detection settings such as threshold, prediction
 history, patience, and debounce time.
 
-## 🗣️ Using VAD Directly
+## Using VAD Directly 🗣️
 
 `VAD` can be used independently from the wake-word engine. Use this when you
 need speech/silence detection for a conversation stream with separate state and
@@ -185,7 +185,7 @@ Use a separate `VAD` instance for unrelated streams. The model keeps recurrent
 state and score history, so sharing one instance between wake-word suppression
 and conversation silence detection will couple those workflows.
 
-## 🧪 Tests
+## Tests 🧪
 
 ```bash
 go test ./...
@@ -209,7 +209,7 @@ go test -run TestOfficialONNXModels -v
 - `silero_vad.onnx`
 - one or more wake-word models, for example `alexa_v0.1.onnx`
 
-## 🎙️ Microphone Example
+## Microphone Example 🎙
 
 The example in `examples/microphone` listens to the default PortAudio input. It
 is a separate Go module so the main library does not depend on PortAudio. The
@@ -268,7 +268,7 @@ Set `--vad-threshold 0` to disable VAD. The default microphone must support
 mono capture at 16 kHz. macOS will ask for microphone permission the first time
 the program starts recording.
 
-## 🗺️ Roadmap
+## Roadmap 🗺️
 
 - GitHub Actions CI for `go test ./...` and `go vet ./...`.
 - WAV-file example that accepts a local file path instead of bundling sample
@@ -279,7 +279,7 @@ the program starts recording.
   prediction.
 - Additional opt-in benchmarks around local ONNX model assets.
 
-## 📄 License
+## License
 
-The Go source code in this repository is licensed under Apache-2.0. Official
-openWakeWord model weights are licensed separately under CC BY-NC-SA 4.0.
+- The Go source code in this repository is licensed under Apache-2.0.
+- Official openWakeWord model weights are licensed separately under CC BY-NC-SA 4.0.
