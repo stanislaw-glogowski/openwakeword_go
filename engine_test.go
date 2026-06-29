@@ -7,18 +7,81 @@ import (
 )
 
 func TestPredictionHistoryHelpers(t *testing.T) {
-	m := &model{threshold: 32, history: make([]float32, 0, predictionHistory+5)}
-	for i := 0; i < predictionHistory+5; i++ {
+	m := &model{threshold: 32, history: make([]float32, 0, defaultModelPredictionHistory+5)}
+	for i := 0; i < defaultModelPredictionHistory+5; i++ {
 		m.appendHistory(float32(i))
 	}
-	if len(m.history) != predictionHistory {
-		t.Fatalf("expected %d history entries, got %d", predictionHistory, len(m.history))
+	if len(m.history) != defaultModelPredictionHistory {
+		t.Fatalf("expected %d history entries, got %d", defaultModelPredictionHistory, len(m.history))
 	}
 	if m.history[0] != 5 {
 		t.Fatalf("expected oldest retained score 5, got %v", m.history[0])
 	}
 	if got := m.countAtLeast(4); got != 3 {
 		t.Fatalf("expected 3 scores at least 32, got %d", got)
+	}
+}
+
+func TestPredictionHistoryHelpersCustomLimit(t *testing.T) {
+	m := &model{predictionHistory: 3, history: make([]float32, 0, 5)}
+	for i := 0; i < 5; i++ {
+		m.appendHistory(float32(i))
+	}
+
+	if len(m.history) != 3 {
+		t.Fatalf("expected 3 history entries, got %d", len(m.history))
+	}
+	if m.history[0] != 2 {
+		t.Fatalf("expected oldest retained score 2, got %v", m.history[0])
+	}
+}
+
+func TestModelOptionsNormalize(t *testing.T) {
+	opts := ModelOptions{}
+
+	if err := opts.normalize(); err != nil {
+		t.Fatal(err)
+	}
+	if opts.Threshold != defaultModelThreshold {
+		t.Fatalf("Threshold = %v, want %v", opts.Threshold, defaultModelThreshold)
+	}
+	if opts.PredictionHistory != defaultModelPredictionHistory {
+		t.Fatalf("PredictionHistory = %d, want %d", opts.PredictionHistory, defaultModelPredictionHistory)
+	}
+	if opts.Patience != defaultModelPatience {
+		t.Fatalf("Patience = %d, want %d", opts.Patience, defaultModelPatience)
+	}
+	if opts.DebounceTime != defaultModelDebounceTime {
+		t.Fatalf("DebounceTime = %v, want %v", opts.DebounceTime, defaultModelDebounceTime)
+	}
+}
+
+func TestModelOptionsNormalizeInvalid(t *testing.T) {
+	tests := []struct {
+		name string
+		opts ModelOptions
+	}{
+		{
+			name: "negative prediction history",
+			opts: ModelOptions{PredictionHistory: -1},
+		},
+		{
+			name: "negative patience",
+			opts: ModelOptions{Patience: -1},
+		},
+		{
+			name: "negative debounce",
+			opts: ModelOptions{DebounceTime: -1},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.opts.normalize()
+			if err == nil {
+				t.Fatal("expected error")
+			}
+		})
 	}
 }
 

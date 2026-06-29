@@ -9,28 +9,39 @@ import (
 )
 
 const (
-	defaultModelThreshold    = 0.9
-	defaultModelPatience     = 0
-	defaultModelDebounceTime = 0
-	predictionHistory        = 30
+	defaultModelThreshold         = 0.9
+	defaultModelPatience          = 0
+	defaultModelDebounceTime      = 0
+	defaultModelPredictionHistory = 30
 )
 
 type (
 	// ModelOptions configures how a wake-word model score is interpreted.
 	ModelOptions struct {
-		Name         string
-		Threshold    float32
-		Patience     int
+		// Name is the key used for this model in prediction results.
+		Name string
+
+		// Threshold is the minimum score treated as a wake-word detection.
+		Threshold float32
+
+		// PredictionHistory is the maximum number of recent scores retained.
+		PredictionHistory int
+
+		// Patience is the number of recent scores that must meet the threshold.
+		Patience int
+
+		// DebounceTime suppresses repeated detections within this duration.
 		DebounceTime time.Duration
 	}
 	model struct {
-		name         string
-		session      *onnxSession
-		threshold    float32
-		patience     int
-		debounceTime time.Duration
-		inputFrames  int
-		history      []float32
+		name              string
+		session           *onnxSession
+		threshold         float32
+		predictionHistory int
+		patience          int
+		debounceTime      time.Duration
+		inputFrames       int
+		history           []float32
 	}
 )
 
@@ -41,7 +52,16 @@ func WithModelName(name string) func(*ModelOptions) {
 	}
 }
 
-// WithModelThreshold sets the score threshold used by patience and debounce.
+// WithModelPredictionHistory sets how many recent scores are retained for
+// patience and debounce checks.
+func WithModelPredictionHistory(predictionHistory int) func(*ModelOptions) {
+	return func(opts *ModelOptions) {
+		opts.PredictionHistory = predictionHistory
+	}
+}
+
+// WithModelThreshold sets the score threshold used by Detect, patience, and
+// debounce.
 func WithModelThreshold(threshold float32) func(*ModelOptions) {
 	return func(opts *ModelOptions) {
 		opts.Threshold = threshold
@@ -64,11 +84,7 @@ func WithModelDebounce(debounceTime time.Duration) func(*ModelOptions) {
 }
 
 func buildModelOptions(options ...func(*ModelOptions)) ModelOptions {
-	opts := &ModelOptions{
-		Threshold:    defaultModelThreshold,
-		Patience:     defaultModelPatience,
-		DebounceTime: defaultModelDebounceTime,
-	}
+	opts := &ModelOptions{}
 	for _, opt := range options {
 		opt(opts)
 	}
@@ -76,14 +92,8 @@ func buildModelOptions(options ...func(*ModelOptions)) ModelOptions {
 }
 
 func newModel(path string, opts ModelOptions) (*model, error) {
-	if opts.Threshold == 0 {
-		opts.Threshold = defaultModelThreshold
-	}
-	if opts.Patience == 0 {
-		opts.Patience = defaultModelPatience
-	}
-	if opts.DebounceTime == 0 {
-		opts.DebounceTime = defaultModelDebounceTime
+	if err := opts.normalize(); err != nil {
+		return nil, fmt.Errorf("model options: %w", err)
 	}
 	if strings.ToLower(filepath.Ext(path)) != ".onnx" {
 		return nil, fmt.Errorf("wake-word model must be an ONNX file, got %q", filepath.Ext(path))
@@ -116,12 +126,13 @@ func newModel(path string, opts ModelOptions) (*model, error) {
 		return nil, fmt.Errorf("wake-word model %q must return one score, got %d", name, outputCount)
 	}
 	return &model{
-		name:         name,
-		session:      session,
-		threshold:    opts.Threshold,
-		patience:     opts.Patience,
-		debounceTime: opts.DebounceTime,
-		inputFrames:  int(session.inputs[0].Dimensions[1]),
+		name:              name,
+		session:           session,
+		threshold:         opts.Threshold,
+		predictionHistory: opts.PredictionHistory,
+		patience:          opts.Patience,
+		debounceTime:      opts.DebounceTime,
+		inputFrames:       int(session.inputs[0].Dimensions[1]),
 	}, nil
 }
 
@@ -142,8 +153,12 @@ func (m *model) close() error {
 
 func (m *model) appendHistory(score float32) {
 	m.history = append(m.history, score)
-	if len(m.history) > predictionHistory {
-		m.history = m.history[len(m.history)-predictionHistory:]
+	limit := m.predictionHistory
+	if limit == 0 {
+		limit = defaultModelPredictionHistory
+	}
+	if len(m.history) > limit {
+		m.history = m.history[len(m.history)-limit:]
 	}
 }
 
@@ -156,6 +171,31 @@ func (m *model) countAtLeast(n int) (count int) {
 		if value >= m.threshold {
 			count++
 		}
+	}
+	return
+}
+
+func (o *ModelOptions) normalize() (err error) {
+	if o.Threshold == 0 {
+		o.Threshold = defaultModelThreshold
+	}
+	if o.PredictionHistory == 0 {
+		o.PredictionHistory = defaultModelPredictionHistory
+	}
+	if o.Patience == 0 {
+		o.Patience = defaultModelPatience
+	}
+	if o.DebounceTime == 0 {
+		o.DebounceTime = defaultModelDebounceTime
+	}
+	if o.PredictionHistory <= 0 {
+		err = errors.Join(err, errors.New("model prediction history must be positive"))
+	}
+	if o.Patience < 0 {
+		err = errors.Join(err, errors.New("model patience must be non-negative"))
+	}
+	if o.DebounceTime < 0 {
+		err = errors.Join(err, errors.New("model debounce time must be non-negative"))
 	}
 	return
 }

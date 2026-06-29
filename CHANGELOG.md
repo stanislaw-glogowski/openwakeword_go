@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Public `WithModelPredictionHistory` configuration for model score history.
+- Public `VAD.ContextScore` access and `WithVADContextWindow` configuration for inspecting delayed VAD speech context.
+
 ## v0.1.0 - 2026-06-28
 
 Initial preview release of `openwakeword_go`.

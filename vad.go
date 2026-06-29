@@ -7,15 +7,26 @@ import (
 )
 
 const (
-	defaultVADFrameSize = 640
-	defaultVADThreshold = 0.5
+	defaultVADFrameSize                = 640
+	defaultVADThreshold                = 0.5
+	defaultVADContextWindowStartOffset = 7
+	defaultVADContextWindowEndOffset   = 4
 )
 
 type (
 	// VADOptions configures Silero VAD scoring.
 	VADOptions struct {
+		// FrameSize is the number of audio samples scored per VAD model call.
 		FrameSize int
+
+		// Threshold is the minimum speech score required by Detect and DetectContext.
 		Threshold float32
+
+		// ContextWindowStartOffset is how far back ContextScore starts looking.
+		ContextWindowStartOffset int
+
+		// ContextWindowEndOffset is how many newest scores ContextScore ignores.
+		ContextWindowEndOffset int
 	}
 
 	// VAD wraps a stateful Silero ONNX VAD model.
@@ -42,6 +53,16 @@ func WithVADThreshold(threshold float32) func(*VADOptions) {
 	}
 }
 
+// WithVADContextWindow sets the delayed score window used by ContextScore.
+// Offsets are counted back from the newest VAD score. The start offset must be
+// greater than the end offset; an end offset of zero includes the newest score.
+func WithVADContextWindow(startOffset, endOffset int) func(*VADOptions) {
+	return func(opts *VADOptions) {
+		opts.ContextWindowStartOffset = startOffset
+		opts.ContextWindowEndOffset = endOffset
+	}
+}
+
 // NewVAD loads a Silero VAD model using functional options.
 func NewVAD(path string, options ...func(*VADOptions)) (*VAD, error) {
 	opts := &VADOptions{}
@@ -53,14 +74,8 @@ func NewVAD(path string, options ...func(*VADOptions)) (*VAD, error) {
 
 // NewVADWithOptions loads a Silero VAD model using a VADOptions value directly.
 func NewVADWithOptions(path string, opts VADOptions) (*VAD, error) {
-	if opts.Threshold == 0 {
-		opts.Threshold = defaultVADThreshold
-	}
-	if opts.FrameSize == 0 {
-		opts.FrameSize = defaultVADFrameSize
-	}
-	if opts.FrameSize <= 0 {
-		return nil, errors.New("vad frame size must be positive")
+	if err := opts.normalize(); err != nil {
+		return nil, fmt.Errorf("vad options: %w", err)
 	}
 	model, err := newONNXSession(path)
 	if err != nil {
@@ -117,7 +132,25 @@ func (v *VAD) DetectContext(samples Samples) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return v.contextScore() > v.opts.Threshold, nil
+	return v.ContextScore() > v.opts.Threshold, nil
+}
+
+// ContextScore returns the maximum recent VAD score from the configured context
+// window. By default, it follows openWakeWord's delayed speech check, skipping
+// the newest scores so wake words that precede speech onset are not suppressed.
+func (v *VAD) ContextScore() float32 {
+	end := len(v.history) - v.opts.ContextWindowEndOffset
+	start := len(v.history) - v.opts.ContextWindowStartOffset
+	if start < 0 || end <= start {
+		return 0
+	}
+	score := v.history[start]
+	for _, s := range v.history[start+1 : end] {
+		if s > score {
+			score = s
+		}
+	}
+	return score
 }
 
 // Reset clears recurrent state and score history.
@@ -137,17 +170,28 @@ func (v *VAD) Close() error {
 	return err
 }
 
-func (v *VAD) contextScore() float32 {
-	end := len(v.history) - 4
-	start := len(v.history) - 7
-	if start < 0 || end <= start {
-		return 0
+func (o *VADOptions) normalize() (err error) {
+	if o.Threshold == 0 {
+		o.Threshold = defaultVADThreshold
 	}
-	score := v.history[start]
-	for _, s := range v.history[start+1 : end] {
-		if s > score {
-			score = s
-		}
+	if o.FrameSize == 0 {
+		o.FrameSize = defaultVADFrameSize
 	}
-	return score
+	if o.ContextWindowStartOffset == 0 && o.ContextWindowEndOffset == 0 {
+		o.ContextWindowStartOffset = defaultVADContextWindowStartOffset
+		o.ContextWindowEndOffset = defaultVADContextWindowEndOffset
+	}
+	if o.FrameSize <= 0 {
+		err = errors.Join(err, errors.New("vad frame size must be positive"))
+	}
+	if o.ContextWindowStartOffset <= 0 {
+		err = errors.Join(err, errors.New("vad context window start offset must be positive"))
+	}
+	if o.ContextWindowEndOffset < 0 {
+		err = errors.Join(err, errors.New("vad context window end offset must be non-negative"))
+	}
+	if o.ContextWindowStartOffset <= o.ContextWindowEndOffset {
+		err = errors.Join(err, errors.New("vad context window start offset must be greater than end offset"))
+	}
+	return
 }

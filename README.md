@@ -100,6 +100,7 @@ func main() {
 		"models/hey_jarvis_v0.1.onnx",
 		openwakeword.WithModelName("hey_jarvis_v0.1"),
 		openwakeword.WithModelThreshold(0.5),
+		openwakeword.WithModelPredictionHistory(30),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -146,8 +147,8 @@ The WAV must be mono 16-bit PCM at 16 kHz.
 
 `AddModel` loads a binary wake-word ONNX model. `WithModelName` controls the key
 returned by `Predict`; if it is omitted, the filename without `.onnx` is used.
-Model options store per-model detection settings such as threshold, patience,
-and debounce time.
+Model options store per-model detection settings such as threshold, prediction
+history, patience, and debounce time.
 
 ## 🗣️ Using VAD Directly
 
@@ -160,6 +161,7 @@ vad, err := openwakeword.NewVAD(
 	"models/silero_vad.onnx",
 	openwakeword.WithVADThreshold(0.5),
 	openwakeword.WithVADFrameSize(640),
+	openwakeword.WithVADContextWindow(7, 4),
 )
 if err != nil {
 	log.Fatal(err)
@@ -174,6 +176,10 @@ if !speech {
 	log.Println("silence detected")
 }
 ```
+
+Use `ContextScore` to inspect the delayed speech context used by
+`DetectContext` and the engine's VAD suppression path. `WithVADContextWindow`
+sets that history window as offsets counted back from the newest VAD score.
 
 Use a separate `VAD` instance for unrelated streams. The model keeps recurrent
 state and score history, so sharing one instance between wake-word suppression
